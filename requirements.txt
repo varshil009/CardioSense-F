@@ -1,0 +1,10 @@
+# Streamlit UI
+streamlit>=1.44
+
+# Data / plotting
+numpy>=1.26
+pandas>=2.2
+matplotlib>=3.8
+
+# API client
+requests>=2.32
