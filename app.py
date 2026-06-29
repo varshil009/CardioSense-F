@@ -2,7 +2,7 @@ import io
 import json
 from pathlib import Path
 from typing import Any
-
+import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -13,7 +13,7 @@ import streamlit as st
 # Configuration
 # ──────────────────────────────────────────────────────────────────────
 
-API_BASE = "http://localhost:8000"
+API_BASE = os.getenv("EC2_ENDPOINT")
 
 LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
 
@@ -59,15 +59,21 @@ def health_check() -> dict[str, Any] | None:  # noqa: UP007
 
 
 # ──────────────────────────────────────────────────────────────────────
-# Signal download helper (for plotting)
+# Signal download helper (via backend API)
 # ──────────────────────────────────────────────────────────────────────
 
-def download_signal_for_plot(signal_name: str) -> np.ndarray | None:  # noqa: UP007
-    """Download a test signal's .npy file from the local filesystem."""
-    signal_path = Path(__file__).resolve().parents[1] / "test_signals" / signal_name
-    if signal_path.exists():
-        return np.load(signal_path)
-    return None
+def download_signal_for_plot(signal_name: str) -> np.ndarray | None:
+    """Download a test signal's .npy file from the backend API."""
+    try:
+        resp = requests.get(f"{API_BASE}/api/test-signal/{signal_name}", timeout=30)
+        resp.raise_for_status()
+        return np.load(io.BytesIO(resp.content))
+    except requests.RequestException:
+        # Fallback: try local filesystem
+        signal_path = Path(__file__).resolve().parents[1] / "test_signals" / signal_name
+        if signal_path.exists():
+            return np.load(signal_path)
+        return None
 
 
 # ──────────────────────────────────────────────────────────────────────
