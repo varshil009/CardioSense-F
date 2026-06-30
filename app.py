@@ -333,24 +333,17 @@ def render_analysis_progress() -> None:
 
 def render_results_section() -> None:
     st.divider()
-    st.subheader("3. Diagnostic Report")
     result = st.session_state.analysis_result
 
     report = result.get("report_payload", {})
     confidences = result.get("superclass_confidences", {})
     sample_name = result.get("sample_name", "report")
 
-    # Top summary row with PDF button
-    col1, col2, col3, col4, col5 = st.columns([2, 2, 1.5, 1.5, 2])
-    superclass = result.get("superclass", "?")
-    top_conf = max(confidences.values()) if confidences else 0
-    col1.metric("Predicted Condition", friendly_name(superclass), f"{top_conf * 100:.2f}%")
-    col2.metric("Primary Implication", result.get("primary_implication", "N/A")[:40])
-    patient_info_report = report.get("patient_information", {})
-    col3.metric("Age", patient_info_report.get("age", "?"))
-    col4.metric("Sex", patient_info_report.get("sex", "?"))
-    with col5:
-        st.write("")
+    # Header row with title and PDF button
+    hdr_col1, hdr_col2 = st.columns([3, 1])
+    with hdr_col1:
+        st.subheader("3. Diagnostic Report")
+    with hdr_col2:
         st.write("")
         try:
             pdf_resp = requests.post(
@@ -371,6 +364,17 @@ def render_results_section() -> None:
                 st.error("PDF unavailable")
         except Exception:
             st.error("PDF unavailable")
+
+    # Top summary rows
+    superclass = result.get("superclass", "?")
+    top_conf = max(confidences.values()) if confidences else 0
+    st.metric("Predicted Condition", friendly_name(superclass), f"{top_conf * 100:.2f}%")
+
+    col1, col2, col3 = st.columns([2, 1.5, 1.5])
+    col1.metric("Primary Implication", result.get("primary_implication", "N/A")[:40])
+    patient_info_report = report.get("patient_information", {})
+    col2.metric("Age", patient_info_report.get("age", "?"))
+    col3.metric("Sex", patient_info_report.get("sex", "?"))
 
     # Superclass confidence table
     if confidences:
