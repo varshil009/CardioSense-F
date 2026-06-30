@@ -28,6 +28,18 @@ st.markdown("""
     h1 { font-size: 1.5rem !important; margin-bottom: 0.2rem !important; }
     h2, h3 { margin-bottom: 0.3rem !important; }
     .st-emotion-cache-1r6slb0 { font-size: 0.85rem; }
+    div[data-testid="stDownloadButton"] button {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        font-weight: 600;
+        border: none;
+        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+        transition: all 0.2s ease;
+    }
+    div[data-testid="stDownloadButton"] button:hover {
+        box-shadow: 0 4px 16px rgba(102, 126, 234, 0.6);
+        transform: translateY(-1px);
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -58,18 +70,13 @@ def health_check() -> dict[str, Any] | None:  # noqa: UP007
         return None
 
 
-# ──────────────────────────────────────────────────────────────────────
-# Signal download helper (via backend API)
-# ──────────────────────────────────────────────────────────────────────
-
-def download_signal_for_plot(signal_name: str) -> np.ndarray | None:
+def download_signal_for_plot(signal_name: str) -> np.ndarray | None:  # noqa: UP007
     """Download a test signal's .npy file from the backend API."""
     try:
         resp = requests.get(f"{API_BASE}/api/test-signal/{signal_name}", timeout=30)
         resp.raise_for_status()
         return np.load(io.BytesIO(resp.content))
     except requests.RequestException:
-        # Fallback: try local filesystem
         signal_path = Path(__file__).resolve().parents[1] / "test_signals" / signal_name
         if signal_path.exists():
             return np.load(signal_path)
@@ -77,7 +84,7 @@ def download_signal_for_plot(signal_name: str) -> np.ndarray | None:
 
 
 # ──────────────────────────────────────────────────────────────────────
-# UI
+# UI — Flow: Signal Upload → Patient Info → Analysis → Report
 # ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -96,31 +103,33 @@ def main() -> None:
     st.session_state.setdefault("signal_name", None)
     st.session_state.setdefault("signal_metadata", None)
     st.session_state.setdefault("patient_info", {"age": 45, "sex": "M", "additional_context": ""})
+    st.session_state.setdefault("analysis_in_progress", False)
 
-    tabs = st.tabs(
-        [
-            "1. Signal Upload",
-            "2. Patient Info",
-            "3. Visualization",
-            "4. Analysis",
-            "5. Results",
-        ]
-    )
+    # ── Main single-page flow ──
+    render_signal_section()
 
-    with tabs[0]:
-        render_signal_upload()
-    with tabs[1]:
-        render_patient_information()
-    with tabs[2]:
-        render_signal_visualization()
-    with tabs[3]:
-        render_analysis_dashboard()
-    with tabs[4]:
-        render_results()
+    if st.session_state.signal_data is not None and not st.session_state.analysis_in_progress:
+        render_patient_info_and_analysis()
+
+    if st.session_state.analysis_in_progress:
+        render_analysis_progress()
+
+    if st.session_state.analysis_result is not None and not st.session_state.analysis_in_progress:
+        render_results_section()
+
+    # ── Separate tab for ECG visualisation ──
+    if st.session_state.signal_data is not None:
+        viz_tab = st.tabs(["📊 12-Lead ECG Visualization"])
+        with viz_tab[0]:
+            render_signal_visualization()
 
 
-def render_signal_upload() -> None:
-    st.subheader("Load ECG signal")
+# ──────────────────────────────────────────────────────────────────────
+# Step 1: Load a signal
+# ──────────────────────────────────────────────────────────────────────
+
+def render_signal_section() -> None:
+    st.subheader("1. Load ECG Signal")
     source = st.radio("Signal source", ["Pre-loaded test signal", "Upload file"], horizontal=True)
 
     if source == "Pre-loaded test signal":
@@ -129,7 +138,6 @@ def render_signal_upload() -> None:
             st.info("No test signals found on backend.")
             return
 
-        # Handle both dict list and string list formats
         if isinstance(signals[0], dict):
             signal_names = [s.get("signal_file", str(s.get("ecg_id", ""))) for s in signals]
         else:
@@ -147,7 +155,6 @@ def render_signal_upload() -> None:
                 st.session_state.signal_data = signal_data
                 st.session_state.signal_name = signal_name
 
-                # Store metadata if available
                 meta = None
                 if isinstance(signals[0], dict):
                     for s in signals:
@@ -155,9 +162,9 @@ def render_signal_upload() -> None:
                             meta = s
                             break
                 st.session_state.signal_metadata = meta
-                st.success(f"Loaded {signal_name} ({signal_data.shape})")
+                st.rerun()
             else:
-                st.error(f"Could not load signal file: {signal_name}")
+                st.error("Could not load signal file.")
 
     else:
         uploaded = st.file_uploader("Upload ECG file", type=["npy", "csv", "mat"], label_visibility="collapsed")
@@ -175,29 +182,40 @@ def render_signal_upload() -> None:
             st.session_state.signal_data = signal_data
             st.session_state.signal_name = uploaded.name
             st.session_state.signal_metadata = None
-            st.success(f"Loaded {uploaded.name} ({signal_data.shape})")
+            st.rerun()
 
-    # Display loaded signal info + metadata
-    signal_data = st.session_state.signal_data
-    if signal_data is not None:
-        meta = st.session_state.signal_metadata
-        info_cols = st.columns(4)
-        info_cols[0].metric("File", st.session_state.signal_name[:20])
-        info_cols[1].metric("Shape", f"{signal_data.shape[0]}×{signal_data.shape[1]}")
-        if meta:
-            info_cols[2].metric("True Superclass", meta.get("super_class", meta.get("true_superclass", "?")))
-            info_cols[3].metric("True Subclass", meta.get("sub_class", meta.get("true_subclass", "?")))
-            sex_val = meta.get("sex", meta.get("patient_sex", ""))
-            age_val = meta.get("age", meta.get("patient_age", ""))
-            info_cols = st.columns(4)
-            info_cols[0].metric("Sex", str(sex_val) if sex_val else "—")
-            info_cols[1].metric("Age", str(age_val) if age_val else "—")
-        else:
-            info_cols[2].metric("Dtype", str(signal_data.dtype))
+    # Show signal information after loading
+    if st.session_state.signal_data is not None:
+        render_signal_information()
 
 
-def render_patient_information() -> None:
-    st.subheader("Patient information")
+# ──────────────────────────────────────────────────────────────────────
+# Display signal metadata (without internal details like filename/shape)
+# ──────────────────────────────────────────────────────────────────────
+
+def render_signal_information() -> None:
+    st.markdown("**Actual Signal Information**")
+    meta = st.session_state.signal_metadata
+    if meta:
+        cols = st.columns(4)
+        cols[0].metric("Superclass", meta.get("super_class", meta.get("true_superclass", "?")))
+        cols[1].metric("Subclass", meta.get("sub_class", meta.get("true_subclass", "?")))
+        sex_val = meta.get("sex", meta.get("patient_sex", ""))
+        age_val = meta.get("age", meta.get("patient_age", ""))
+        cols[2].metric("Sex", str(sex_val) if sex_val else "—")
+        cols[3].metric("Age", str(age_val) if age_val else "—")
+    else:
+        st.info("Signal loaded (no additional metadata available).")
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Step 2: Patient info + trigger analysis
+# ──────────────────────────────────────────────────────────────────────
+
+def render_patient_info_and_analysis() -> None:
+    st.divider()
+    st.subheader("2. Patient Information")
+
     info = st.session_state.patient_info
     col1, col2, col3 = st.columns(3)
     age = col1.number_input("Age", min_value=0, max_value=120, value=int(info["age"]))
@@ -213,97 +231,86 @@ def render_patient_information() -> None:
         "additional_context": additional_context.strip(),
     }
 
-
-def render_signal_visualization() -> None:
-    st.subheader("12-lead ECG")
-    signal_data = st.session_state.signal_data
-    if signal_data is None:
-        st.info("Load a signal first.")
-        return
-
-    if signal_data.ndim != 2 or signal_data.shape[1] < 12:
-        st.error(f"Invalid shape: {signal_data.shape}. Expected (samples, 12).")
-        return
-
-    fig, axes = plt.subplots(6, 2, figsize=(10, 8), sharex=True)
-    axes = axes.flatten()
-    for lead_idx, lead_name in enumerate(LEAD_NAMES):
-        axes[lead_idx].plot(signal_data[:, lead_idx], linewidth=0.6, color="#1f77b4")
-        axes[lead_idx].set_title(lead_name, fontsize=9)
-        axes[lead_idx].grid(alpha=0.15)
-        axes[lead_idx].tick_params(labelsize=7)
-    fig.tight_layout(pad=0.5, h_pad=0.4, w_pad=0.3)
-    st.pyplot(fig)
+    st.divider()
+    if st.button("Start Analysis", type="primary", use_container_width=True):
+        st.session_state.analysis_in_progress = True
+        st.session_state.analysis_result = None
+        st.rerun()
 
 
-def render_analysis_dashboard() -> None:
-    st.subheader("Run analysis")
+# ──────────────────────────────────────────────────────────────────────
+# Step 3: Show analysis progress (replaces patient info section)
+# ──────────────────────────────────────────────────────────────────────
+
+def render_analysis_progress() -> None:
+    st.subheader("Running Analysis")
     signal_data = st.session_state.signal_data
     signal_name = st.session_state.signal_name
-
-    if signal_data is None:
-        st.info("Load a signal first.")
-        return
-
     patient_info = st.session_state.patient_info
 
-    if st.button("Start analysis", type="primary", use_container_width=True):
-        st.info("Sending signal to backend...")
-        progress_bar = st.progress(0)
-        status_box = st.empty()
+    progress_bar = st.progress(0)
+    status_box = st.empty()
 
-        buf = io.BytesIO()
-        np.save(buf, signal_data)
-        buf.seek(0)
-        files = {"signal_file": (signal_name or "signal.npy", buf, "application/octet-stream")}
+    buf = io.BytesIO()
+    np.save(buf, signal_data)
+    buf.seek(0)
+    files = {"signal_file": (signal_name or "signal.npy", buf, "application/octet-stream")}
 
-        data = {
-            "age": patient_info["age"],
-            "sex": patient_info["sex"],
-            "additional_context": patient_info["additional_context"],
-        }
+    data = {
+        "age": patient_info["age"],
+        "sex": patient_info["sex"],
+        "additional_context": patient_info["additional_context"],
+    }
 
-        try:
-            progress_bar.progress(20)
-            status_box.write("Sending to backend...")
+    try:
+        progress_bar.progress(20)
+        status_box.write("Sending to backend...")
 
-            resp = requests.post(f"{API_BASE}/api/analyze", files=files, data=data, timeout=300)
+        resp = requests.post(f"{API_BASE}/api/analyze", files=files, data=data, timeout=300)
 
-            progress_bar.progress(80)
-            status_box.write("Processing response...")
+        progress_bar.progress(80)
+        status_box.write("Processing response...")
 
-            resp.raise_for_status()
-            result = resp.json()
+        resp.raise_for_status()
+        result = resp.json()
 
-            if "error" in result:
-                st.error(f"Analysis failed: {result['error']}")
-                return
+        if "error" in result:
+            st.error(f"Analysis failed: {result['error']}")
+            st.session_state.analysis_in_progress = False
+            return
 
-            st.session_state.analysis_result = result
-            progress_bar.progress(100)
-            status_box.write("Analysis completed!")
-            st.success("Analysis completed successfully")
+        st.session_state.analysis_result = result
+        progress_bar.progress(100)
+        status_box.write("Analysis completed!")
+        st.success("Analysis completed successfully")
+        st.session_state.analysis_in_progress = False
+        st.rerun()
 
-        except requests.Timeout:
-            st.error("Request timed out.")
-        except requests.RequestException:
-            st.error("Backend request failed. Please try again later.")
-        except Exception:
-            st.error("An unexpected error occurred. Please try again.")
+    except requests.Timeout:
+        st.error("Request timed out.")
+        st.session_state.analysis_in_progress = False
+    except requests.RequestException:
+        st.error("Backend request failed. Please try again later.")
+        st.session_state.analysis_in_progress = False
+    except Exception:
+        st.error("An unexpected error occurred. Please try again.")
+        st.session_state.analysis_in_progress = False
 
 
-def render_results() -> None:
-    st.subheader("Diagnostic report")
+# ──────────────────────────────────────────────────────────────────────
+# Step 4: Show diagnostic report
+# ──────────────────────────────────────────────────────────────────────
+
+def render_results_section() -> None:
+    st.divider()
+    st.subheader("3. Diagnostic Report")
     result = st.session_state.analysis_result
-    if result is None:
-        st.info("Run the analysis first.")
-        return
 
     report = result.get("report_payload", {})
     confidences = result.get("superclass_confidences", {})
     sample_name = result.get("sample_name", "report")
 
-    # Top summary row with PDF button near Sex
+    # Top summary row with PDF button
     col1, col2, col3, col4, col5 = st.columns([2, 2, 1.5, 1.5, 2])
     superclass = result.get("superclass", "?")
     top_conf = max(confidences.values()) if confidences else 0
@@ -322,25 +329,6 @@ def render_results() -> None:
                 timeout=30,
             )
             if pdf_resp.status_code == 200:
-                st.markdown(
-                    """
-                    <style>
-                    div[data-testid="stDownloadButton"] button {
-                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-                        color: white;
-                        font-weight: 600;
-                        border: none;
-                        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
-                        transition: all 0.2s ease;
-                    }
-                    div[data-testid="stDownloadButton"] button:hover {
-                        box-shadow: 0 4px 16px rgba(102, 126, 234, 0.6);
-                        transform: translateY(-1px);
-                    }
-                    </style>
-                    """,
-                    unsafe_allow_html=True,
-                )
                 st.download_button(
                     "📥 Download PDF Report",
                     data=pdf_resp.content,
@@ -354,20 +342,20 @@ def render_results() -> None:
         except Exception:
             st.error("PDF unavailable")
 
-    # Superclass confidence table (compact)
+    # Superclass confidence table
     if confidences:
         conf_df = pd.DataFrame(
-            {"Superclass": list(confidences.keys()), "Confidence %": [f"{v * 100:.2f}%" for v in confidences.values()]}
+            {"Superclass": list(confidences.keys()),
+             "Confidence %": [f"{v * 100:.2f}%" for v in confidences.values()]}
         )
         st.dataframe(conf_df, hide_index=True, use_container_width=True)
 
-    # Implications, findings, diagnosis
+    # Implications and findings
     imp_col, diag_col = st.columns(2)
     with imp_col:
         st.write("**Possible implications**")
         for imp in result.get("possible_implications", [])[:5]:
             st.write(f"- {imp.get('label', '?')}")
-
     with diag_col:
         st.write("**Key findings**")
         for finding in result.get("subclass_reasoning", [])[:5]:
@@ -387,6 +375,41 @@ def render_results() -> None:
         with st.expander("Abbreviation Footnotes", expanded=False):
             for abbr, full_form in abbreviations[:20]:
                 st.write(f"- {abbr} = {full_form}")
+
+    # Allow starting a new analysis
+    st.divider()
+    if st.button("🔄 New Analysis", use_container_width=True):
+        st.session_state.analysis_result = None
+        st.session_state.signal_data = None
+        st.session_state.signal_name = None
+        st.session_state.signal_metadata = None
+        st.session_state.analysis_in_progress = False
+        st.rerun()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# ECG visualisation (in a dedicated tab)
+# ──────────────────────────────────────────────────────────────────────
+
+def render_signal_visualization() -> None:
+    signal_data = st.session_state.signal_data
+    if signal_data is None:
+        st.info("Load a signal first.")
+        return
+
+    if signal_data.ndim != 2 or signal_data.shape[1] < 12:
+        st.error(f"Invalid shape: {signal_data.shape}. Expected (samples, 12).")
+        return
+
+    fig, axes = plt.subplots(6, 2, figsize=(10, 8), sharex=True)
+    axes = axes.flatten()
+    for lead_idx, lead_name in enumerate(LEAD_NAMES):
+        axes[lead_idx].plot(signal_data[:, lead_idx], linewidth=0.6, color="#1f77b4")
+        axes[lead_idx].set_title(lead_name, fontsize=9)
+        axes[lead_idx].grid(alpha=0.15)
+        axes[lead_idx].tick_params(labelsize=7)
+    fig.tight_layout(pad=0.5, h_pad=0.4, w_pad=0.3)
+    st.pyplot(fig)
 
 
 if __name__ == "__main__":
