@@ -44,8 +44,8 @@ def fetch_test_signals() -> list[dict[str, Any]]:
         resp.raise_for_status()
         data = resp.json()
         return data.get("signals", [])
-    except requests.RequestException as exc:
-        st.error(f"Could not connect to backend: {exc}")
+    except requests.RequestException:
+        st.error("Could not connect to backend. Please ensure the backend server is running.")
         return []
 
 
@@ -286,10 +286,10 @@ def render_analysis_dashboard() -> None:
 
         except requests.Timeout:
             st.error("Request timed out.")
-        except requests.RequestException as exc:
-            st.error(f"Backend request failed: {exc}")
-        except Exception as exc:
-            st.error(f"Unexpected error: {exc}")
+        except requests.RequestException:
+            st.error("Backend request failed. Please try again later.")
+        except Exception:
+            st.error("An unexpected error occurred. Please try again.")
 
 
 def render_results() -> None:
@@ -322,12 +322,32 @@ def render_results() -> None:
                 timeout=30,
             )
             if pdf_resp.status_code == 200:
+                st.markdown(
+                    """
+                    <style>
+                    div[data-testid="stDownloadButton"] button {
+                        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        color: white;
+                        font-weight: 600;
+                        border: none;
+                        box-shadow: 0 2px 8px rgba(102, 126, 234, 0.4);
+                        transition: all 0.2s ease;
+                    }
+                    div[data-testid="stDownloadButton"] button:hover {
+                        box-shadow: 0 4px 16px rgba(102, 126, 234, 0.6);
+                        transform: translateY(-1px);
+                    }
+                    </style>
+                    """,
+                    unsafe_allow_html=True,
+                )
                 st.download_button(
-                    "Download PDF",
+                    "📥 Download PDF Report",
                     data=pdf_resp.content,
                     file_name=f"{sample_name}.pdf",
                     mime="application/pdf",
                     use_container_width=True,
+                    type="primary",
                 )
             else:
                 st.error("PDF unavailable")
