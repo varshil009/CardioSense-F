@@ -225,15 +225,15 @@ def render_signal_information() -> None:
     st.markdown("**Actual Signal Information**")
     meta = st.session_state.signal_metadata
     if meta:
-        cols = st.columns(4)
         super_code = meta.get("super_class", meta.get("true_superclass", "?"))
         sub_code = meta.get("sub_class", meta.get("true_subclass", "?"))
-        cols[0].metric("Actual Heart Disease", friendly_name(super_code))
-        cols[1].metric("Subtype", friendly_name(sub_code))
+        st.metric("Heart Condition", friendly_name(super_code))
+        cols = st.columns(3)
+        cols[0].metric("Subtype", friendly_name(sub_code))
         sex_val = meta.get("sex", meta.get("patient_sex", ""))
         age_val = meta.get("age", meta.get("patient_age", ""))
-        cols[2].metric("Sex", str(sex_val) if sex_val else "—")
-        cols[3].metric("Age", str(age_val) if age_val else "—")
+        cols[1].metric("Sex", str(sex_val) if sex_val else "—")
+        cols[2].metric("Age", str(age_val) if age_val else "—")
     else:
         st.info("Signal loaded (no additional metadata available).")
 
