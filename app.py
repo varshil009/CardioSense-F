@@ -17,6 +17,14 @@ API_BASE = os.getenv("EC2_ENDPOINT")
 
 LEAD_NAMES = ["I", "II", "III", "aVR", "aVL", "aVF", "V1", "V2", "V3", "V4", "V5", "V6"]
 
+SUPERCLASS_MAP = {
+    "NORM": "Normal Heart Rhythm",
+    "HYP": "Thickened Heart Muscle (Hypertrophy)",
+    "STTC": "Changes in Heart Electrical Signals (ST-T Changes)",
+    "CD": "Heart's Electrical Conduction Problem",
+    "MI": "Heart Attack (Myocardial Infarction)",
+}
+
 st.set_page_config(page_title="ECG Diagnosis Application", layout="wide", initial_sidebar_state="collapsed")
 
 # Compact CSS
@@ -152,6 +160,13 @@ def render_signal_section() -> None:
         if load_clicked:
             signal_data = download_signal_for_plot(signal_name)
             if signal_data is not None:
+                if signal_data.ndim != 2 or signal_data.shape[0] != 1000 or signal_data.shape[1] != 12:
+                    st.error(
+                        f"Invalid shape: {signal_data.shape}. "
+                        "The signal must have exactly **1000 time samples × 12 leads** (shape 1000, 12)."
+                    )
+                    return
+
                 st.session_state.signal_data = signal_data
                 st.session_state.signal_name = signal_name
 
@@ -167,6 +182,7 @@ def render_signal_section() -> None:
                 st.error("Could not load signal file.")
 
     else:
+        st.warning("⚠️ File must be a **.npy** array with shape **(1000, 12)** (1000 time samples × 12 ECG leads).")
         uploaded = st.file_uploader("Upload ECG file", type=["npy", "csv", "mat"], label_visibility="collapsed")
         if uploaded is not None:
             content = uploaded.getvalue()
@@ -178,6 +194,13 @@ def render_signal_section() -> None:
                 except Exception:
                     st.error("Unsupported file format. Please upload .npy, .csv, or .mat files.")
                     return
+
+            if signal_data.ndim != 2 or signal_data.shape[0] != 1000 or signal_data.shape[1] != 12:
+                st.error(
+                    f"Invalid shape: {signal_data.shape}. "
+                    "The signal must have exactly **1000 time samples × 12 leads** (shape 1000, 12)."
+                )
+                return
 
             st.session_state.signal_data = signal_data
             st.session_state.signal_name = uploaded.name
@@ -193,13 +216,20 @@ def render_signal_section() -> None:
 # Display signal metadata (without internal details like filename/shape)
 # ──────────────────────────────────────────────────────────────────────
 
+def friendly_name(code: str) -> str:
+    """Map a disease code to a user-friendly name, or return the code as-is if unknown."""
+    return SUPERCLASS_MAP.get(code.upper(), code)
+
+
 def render_signal_information() -> None:
     st.markdown("**Actual Signal Information**")
     meta = st.session_state.signal_metadata
     if meta:
         cols = st.columns(4)
-        cols[0].metric("Superclass", meta.get("super_class", meta.get("true_superclass", "?")))
-        cols[1].metric("Subclass", meta.get("sub_class", meta.get("true_subclass", "?")))
+        super_code = meta.get("super_class", meta.get("true_superclass", "?"))
+        sub_code = meta.get("sub_class", meta.get("true_subclass", "?"))
+        cols[0].metric("Actual Heart Disease", friendly_name(super_code))
+        cols[1].metric("Subtype", friendly_name(sub_code))
         sex_val = meta.get("sex", meta.get("patient_sex", ""))
         age_val = meta.get("age", meta.get("patient_age", ""))
         cols[2].metric("Sex", str(sex_val) if sex_val else "—")
@@ -314,8 +344,8 @@ def render_results_section() -> None:
     col1, col2, col3, col4, col5 = st.columns([2, 2, 1.5, 1.5, 2])
     superclass = result.get("superclass", "?")
     top_conf = max(confidences.values()) if confidences else 0
-    col1.metric("Superclass", superclass, f"{top_conf * 100:.2f}%")
-    col2.metric("Top Implication", result.get("primary_implication", "N/A")[:25])
+    col1.metric("Predicted Condition", friendly_name(superclass), f"{top_conf * 100:.2f}%")
+    col2.metric("Primary Implication", result.get("primary_implication", "N/A")[:40])
     patient_info_report = report.get("patient_information", {})
     col3.metric("Age", patient_info_report.get("age", "?"))
     col4.metric("Sex", patient_info_report.get("sex", "?"))
@@ -345,7 +375,8 @@ def render_results_section() -> None:
     # Superclass confidence table
     if confidences:
         conf_df = pd.DataFrame(
-            {"Superclass": list(confidences.keys()),
+            {"Condition": [friendly_name(k) for k in confidences.keys()],
+             "Code": list(confidences.keys()),
              "Confidence %": [f"{v * 100:.2f}%" for v in confidences.values()]}
         )
         st.dataframe(conf_df, hide_index=True, use_container_width=True)
